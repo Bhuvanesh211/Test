@@ -1,569 +1,205 @@
-# TBMFotaService Full Detailed Analysis
-
-This document provides a fully detailed analysis for the `TBMFotaService` module:
-- exact method signatures with return types
-- file-level caller/callee relationships
-- separate PlantUML for app and interface modules
-- runtime update flow sequence diagram
-
----
-
-## App Module Detailed Analysis
-
-### File: `app/src/main/java/com/mitsubishielectric/ahu/appservice/tbmfotaservice/TBMFotaService.java`
-
-#### Class: `TBMFotaService`
-Implements:
-- `ITbmFotaCpuComServiceListener`
-- `ITbmFotaCpuComManager`
-- `IIsmServiceListener`
-- `ITbmUpdateStatusChangeListener`
-
-#### Public methods and signatures
-
-- `public IBinder onBind(Intent intent)`
-  - Returns: `IBinder`
-  - Caller: Android framework when service is bound
-  - Callee: `bindExtendedService(intent)`
-
-- `public int onStartCommand(Intent intent, int flags, int startId)`
-  - Returns: `int`
-  - Caller: Android framework when service is started
-  - Callee: `bindExtendedService(intent)`
-
-- `public void onCreate()`
-  - Returns: `void`
-  - Caller: Android framework at service creation
-  - Calls: `VehicleCfgManager.getInstance()`
-
-- `public void notifyTbmData(int tbmUpdateStausCode)`
-  - Returns: `void`
-  - Caller: `TbmFotaCpuComManager.onReceiveCmd(...)`
-  - Calls:
-    - `mIsmManager.setTbmStatusCode(tbmUpdateStausCode)`
-    - `checkTbmStatusForChangingAppDrawerIcons(tbmUpdateStausCode)`
-    - `sendUpdateStatusToArbiter(tbmUpdateStausCode)`
-
-- `public void sendBroadcastToTbmFotaHmi(int tbmUpdateStausCode)`
-  - Returns: `void`
-  - Caller: `sendUpdateStatusToArbiter(...)`, `onIsmDismissPopup()`
-  - Calls:
-    - `getUserOnOffStateInTbmFotaService(intent)`
-    - `sendBroadcast(intent)`
-    - optionally `onTbmUpdateStatusChanged()` or `mIsmManager.setTbmFotaDisplayStatus(...)`
-
-- `public boolean isBoundToTbmHmi()`
-  - Returns: `boolean`
-  - Caller: internal logic and HMI messenger send methods
-
-- `public void onIsmSystemStateTimed(int tbmUpdateStatus)`
-  - Returns: `void`
-  - Caller: `IsmManager` when ISM enters `TIMED` state
-  - Calls:
-    - `statusSilentReceivedInTimedState()` or `sendBroadcastToTbmFotaHmi(...)`
-
-- `public void onIsmServiceConnected()`
-  - Returns: `void`
-  - Caller: `IsmManager` after successful ISM binding
-  - Calls: `mTbmFotaArbiterManager.requestInstallation()` when status is avail/forced/silent
-
-- `public void onIsmDismissPopup()`
-  - Returns: `void`
-  - Caller: `IsmManager` when popup dismiss is required
-  - Calls: `sendBroadcastToTbmFotaHmi(mTbmUpdateStatus)`
-
-- `public void onTbmUpdateStatusChanged()`
-  - Returns: `void`
-  - Caller: `TbmFotaUpdateActionReceiver.onReceive(...)`
-  - Calls: `mTbmFotaArbiterManager.requestInstallationFinished()`
-
-- `public void onTbmUpdateStatusStart()`
-  - Returns: `void`
-  - Caller: `TbmFotaUpdateActionReceiver.onReceive(...)`
-  - Calls: `setBackLight(false)` when user is off
-
-- `public void onIsmOneMinuteExpiredInTbmUpdate(ETbmFotaUpdateStatus mETbmFotaUpdateStatus)`
-  - Returns: `void`
-  - Caller: `TbmFotaUpdateActionReceiver` on timeout
-  - Calls: `mIsmManager.onIsmOneMinuteExpired(...)`
-
-- `public void onTimeOutTimerExpired()`
-  - Returns: `void`
-  - Caller: `IsmManager` timeout thread
-  - Calls: `mTbmFotaArbiterManager.requestInstallationFinished()`
-
-- `public void onEsystemStateChanged(ESystemState eSystemState)`
-  - Returns: `void`
-  - Caller: `IsmManager.ISystemStateListener.onSystemStateChange(...)`
-  - Calls:
-    - `mIsmManager.cancelTimeoutThread()` or `mIsmManager.startThirtyMinuteTimer()`
-    - `getValueOfESystemState(...)`
-    - `mService.send(Message)` if bound to HMI
-
-- `public void onPowerButtonPressed()`
-  - Returns: `void`
-  - Caller: `IsmManager.ISystemStateTransitionTbmFotaUpdateListener.notifyPowerButtonPressedTbmFotaUpdate()`
-  - Calls: `mService.send(Message)` to HMI
-
-- `public void onUserOnOffStatusChanged(boolean isUserOnOff)`
-  - Returns: `void`
-  - Caller: `IsmManager.IAvailabilityChangeListener.onAvailabilityChange(...)`
-  - Calls: `mService.send(Message)` to HMI
-
-- `public void sendCommand(CpuCommand cmd)`
-  - Returns: `void`
-  - Caller: `TBMFotaService` internal or external binder consumers
-  - Calls: `mFotaCpuComManager.sendCommand(cmd)`
-
-- `public void setCpuComBinder(IBinder service)`
-  - Returns: `void`
-  - Caller: interface contract; not implemented in this service class
-
-- `public void onDestroy()`
-  - Returns: `void`
-  - Caller: Android framework at service teardown
-  - Calls: `unbindService(...)` for registered connections
-
-#### Private methods and signatures
-
-- `private void init()`
-  - Caller: `registerToExtendedServiceManager(...)`
-  - Calls:
-    - `new VehiclePowerManager()`
-    - `TbmFotaCpuComManager.getInstance(this)`
-    - `TbmFotaArbiterManager.getInstance(this)`
-    - `IsmManager.getInstance(this)`
-    - `bindService(...)` to TBM HMI
-    - `registerReceiver(...)` for ESM and HMI actions
-
-- `private void bindToIsm()`
-  - Caller: `registerToExtendedServiceManager(...)`
-  - Calls: `mIsmManager.bindService(getApplicationContext())`
-
-- `private void subscribeToVps()`
-  - Caller: `registerToExtendedServiceManager(...)`
-  - Calls:
-    - `ExtSrvManager.getService(Const.CPU_COM_SERVICE)`
-    - `mFotaCpuComManager.setCpuComBinder(...)`
-    - `mVehiclePowerManager.init()`
-    - `mVehiclePowerManager.subscribe(mVehiclePowerServiceListener)`
-
-- `private void bindExtendedService(Intent intent)`
-  - Caller: `onBind(...)`, `onStartCommand(...)`
-  - Calls: `initiateExtSrv(...)` or `bindEsmService()`
-
-- `private void initiateExtSrv(IBinder service)`
-  - Caller: `bindExtendedService(...)`
-  - Calls: `registerToExtendedServiceManager(service)`
-
-- `private void bindEsmService()`
-  - Caller: `bindExtendedService(...)`
-  - Calls: `bindService(...)` to ESM package
-
-- `private void registerToExtendedServiceManager(IBinder esmBinder)`
-  - Caller: `initiateExtSrv(...)`, `bindEsmService()` via callback
-  - Calls:
-    - `ExtSrvManager.setBinder(esmBinder)`
-    - `ExtSrvManager.getInstance()`
-    - `mExtSrvManager.getService(Const.VEHICLE_CONFIG_READER_SERVICE)`
-    - `initiateVehicleConfigReaderService(...)`
-    - `checkVehicleLineConfigIsApplicableForTbm()`
-    - `init()`, `bindToIsm()`, `subscribeToVps()` on applicable vehicles
-
-- `private void initiateVehicleConfigReaderService(IBinder vehicleConfigReaderBinder)`
-  - Caller: `registerToExtendedServiceManager(...)`
-  - Calls: `mVehicleCfgManager.setVehicleConfigReaderBinder(vehicleConfigReaderBinder)`
-
-- `private int getECallButtonValue()`
-  - Returns: `int`
-  - Caller: `sendBroadcastToTbmFotaHmi(...)`
-  - Calls: `VehicleCfgManager.getInstance().getByte(...)`
-
-- `private boolean getUserOnOffStateInTbmFotaService(Intent mIntent)`
-  - Returns: `boolean`
-  - Caller: `sendBroadcastToTbmFotaHmi(...)`
-  - Calls: `mIsmManager.getUserOnOffState()`
-
-- `private void setBackLight(boolean isBackLightOn)`
-  - Caller: `getUserOnOffStateInTbmFotaService(...)`, `onTbmUpdateStatusChanged()`, `onTbmUpdateStatusStart()`
-  - Calls: `mIsmManager.setTbmFotaDisplayStatus(...)`
-
-- `private boolean checkVehicleLineConfigIsApplicableForTbm()`
-  - Returns: `boolean`
-  - Caller: `registerToExtendedServiceManager(...)`
-  - Calls:
-    - `VehicleCfgManager.getInstance().getByte(...)`
-    - `VehicleCfgManager.getInstance().getString(...)`
-
-- `private void sendUpdateStatusToArbiter(int tbmUpdateStausCode)`
-  - Caller: `notifyTbmData(...)`
-  - Calls:
-    - `mTbmFotaArbiterManager.requestInstallation()` or `requestInstallationFinished()`
-    - `sendBroadcastToTbmFotaHmi(...)`
-
-- `private void statusSilentReceivedInTimedState()`
-  - Caller: `onIsmSystemStateTimed(...)`
-  - Calls: `mTbmFotaArbiterManager.requestInstallationFinished()` or `sendBroadcastToTbmFotaHmi(...)`
-
-- `private int getValueOfESystemState(ESystemState eSystemState)`
-  - Returns: `int`
-  - Caller: `onEsystemStateChanged(...)`
-
-- `private void checkTbmStatusForChangingAppDrawerIcons(int tbmUpdateStausCode)`
-  - Caller: `notifyTbmData(...)`
-  - Calls: `notifyTbmUpdateStsToAppDrawer(true|false)`
-
-- `private void notifyTbmUpdateStsToAppDrawer(boolean sts)`
-  - Caller: `checkTbmStatusForChangingAppDrawerIcons(...)`
-  - Calls: `mTbmFotaActualUpdateStsCallback.onTbmFotaActualUpdateStsChange(new TbmFotaActualUpdateSts(sts))`
-
-#### Internal callback relationships
-- `mTbmFotaHmiServiceConnection.onServiceConnected(...)` sets HMI binding and messenger object
-- `mSyncConnection.onServiceConnected(...)` registers ESM service manager
-- `mVehiclePowerServiceListener` methods call into TBMFotaService lifecycle and CPU request logic
-- `mExtSrvMgnBroadcastReceiver.onReceive(...)` handles external service reboot binder updates
-- `mFwRebootBroadcastReceiver.onReceive(...)` handles framework service reboot and sets vehicle config reader binder
-
----
-
-### File: `app/src/main/java/com/mitsubishielectric/ahu/appservice/tbmfotaservice/TbmFotaUpdateActionReceiver.java`
-
-#### Class: `TbmFotaUpdateActionReceiver`
-
-##### Methods
-- `public TbmFotaUpdateActionReceiver(ITbmFotaCpuComManager mTbmFotaCpuComManager)`
-  - Returns: constructor
-  - Caller: `TBMFotaService.init()`
-
-- `public void onReceive(Context context, Intent intent)`
-  - Returns: `void`
-  - Caller: Android broadcast system
-  - Calls depending on action:
-    - `mITbmUpdateStatusChangeListener.onTbmUpdateStatusChanged()`
-    - `mTbmFotaCpuComManager.sendCommand(new TbmActionUpdateNotification(updateAction))`
-    - `mITbmUpdateStatusChangeListener.onTbmUpdateStatusStart()`
-    - `mITbmUpdateStatusChangeListener.onIsmOneMinuteExpiredInTbmUpdate(ETbmFotaUpdateStatus.AVAILABLE_USER_OFF)`
-
-##### Caller/Callee mapping
-- Called by: Android broadcast receiver when HMI sends TBM update actions
-- Calls into: `TBMFotaService` via `ITbmUpdateStatusChangeListener`
-- Calls into: `TbmFotaCpuComManager.sendCommand(...)`
-
----
-
-### File: `app/src/main/java/com/mitsubishielectric/ahu/appservice/tbmfotaservice/cpucom/TbmFotaCpuComManager.java`
-
-#### Class: `TbmFotaCpuComManager`
-Implements: `ITbmFotaCpuComManager`
-
-##### Methods
-- `public static TbmFotaCpuComManager getInstance(ITbmFotaCpuComServiceListener itbmFotaCpuComServiceListener)`
-  - Returns: `TbmFotaCpuComManager`
-  - Caller: `TBMFotaService.init()`, `IsmManager` constructor
-
-- `public void setCpuComBinder(IBinder service)`
-  - Returns: `void`
-  - Caller: `TBMFotaService.subscribeToVps()`
-  - Calls: `CpuComManager.setBinder(service)`, `subscribe(new TbmUpdateStatusNotification(), mCpuComServiceListener)`, `subscribeError(mCpuComServiceErrorListener)`
-
-- `public void initialRequest()`
-  - Returns: `void`
-  - Caller: `VehiclePowerManager.onAppStart()`, `VehiclePowerManager.onAppRestart()`, `VehiclePowerManager.onAppResume()`, `IsmManager.ISystemStateListener.onSystemStateChange(...)`
-  - Calls: `sendCommand(new TbmUpdateStatusRequest())`
-
-- `public void sendCommand(CpuCommand cmd)`
-  - Returns: `void`
-  - Caller: `TBMFotaService.sendCommand(...)`, `TbmFotaUpdateActionReceiver.onReceive(...)`
-  - Calls: `CpuComManager.getInstance().sendCmd(cmd)`
-
-- `public static String byteArrayToHex(byte[] raw)`
-  - Returns: `String`
-  - Caller: logging only
-
-- `private void subscribe(CpuCommand cmd, ICpuComServiceListener callback)`
-  - Returns: `void`
-  - Caller: `setCpuComBinder(...)`
-  - Calls: `CpuComManager.getInstance().subscribeCB(cmd, callback)`
-
-- `private void subscribeError(ICpuComServiceErrorListener callback)`
-  - Returns: `void`
-  - Caller: `setCpuComBinder(...)`
-
-- `private void unsubscribe(CpuCommand cmd, ICpuComServiceListener callback)`
-  - Returns: `void`
-  - Not directly called in the current app code
-
-##### Internal callback behavior
-- `ICpuComServiceListener.onReceiveCmd(CpuCommand cpuCommand)`
-  - Caller: `CpuComManager` when CPU sends response
-  - Calls: `mTbmFotaCpuComServiceListener.notifyTbmData(data[0])`
-
-- `ICpuComServiceErrorListener.onError(int i, CpuCommand cpuCommand)`
-  - Caller: `CpuComManager` on error
-  - Behavior: logs and no further action
-
----
-
-### File: `app/src/main/java/com/mitsubishielectric/ahu/appservice/tbmfotaservice/arbiter/TbmFotaArbiterManager.java`
-
-#### Class: `TbmFotaArbiterManager`
-
-##### Methods
-- `public static TbmFotaArbiterManager getInstance(Context mContext)`
-  - Returns: `TbmFotaArbiterManager`
-  - Caller: `TBMFotaService.init()`
-
-- `public void requestInstallation()`
-  - Returns: `void`
-  - Caller: `TBMFotaService.sendUpdateStatusToArbiter(...)`, `TBMFotaService.onIsmServiceConnected()`
-  - Calls: `mArbiterServiceManager.installationRequest(UPDATE_TYPE.OTA_TBM, mIInstallationRequestApprovalListener)`
-
-- `public void requestInstallationFinished()`
-  - Returns: `void`
-  - Caller: `TBMFotaService.sendUpdateStatusToArbiter(...)`, `TBMFotaService.onTbmUpdateStatusChanged()`, `TBMFotaService.statusSilentReceivedInTimedState()`, `TBMFotaService.onTimeOutTimerExpired()`
-  - Calls: `mArbiterServiceManager.installationFinished(UPDATE_TYPE.OTA_TBM)`
-
-- `public boolean getRequestInstallationStatus()`
-  - Returns: `boolean`
-  - Caller: `TBMFotaService.onIsmSystemStateTimed(...)`
-
-- `public ERequestApproverState getERequestApproverState()`
-  - Returns: `ERequestApproverState`
-  - Caller: `TBMFotaService.onIsmSystemStateTimed(...)`
-
-##### Internal callback behavior
-- `onRequestGranted()` updates internal state
-- `onRequestDenied()` updates internal state
-
----
-
-### File: `app/src/main/java/com/mitsubishielectric/ahu/appservice/tbmfotaservice/ism/IsmManager.java`
-
-#### Class: `IsmManager`
-
-##### Methods
-- `public static IsmManager getInstance(IIsmServiceListener mIIsmServiceListener)`
-  - Returns: `IsmManager`
-  - Caller: `TBMFotaService.init()`
-
-- `public void bindService(Context context)`
-  - Returns: `void`
-  - Caller: `TBMFotaService.bindToIsm()`
-  - Calls: `context.bindService(...)` to ISM package
-
-- `public void setTbmStatusCode(int tbmStatusCode)`
-  - Returns: `void`
-  - Caller: `TBMFotaService.notifyTbmData(...)`
-
-- `public boolean getUserOnOffState()`
-  - Returns: `boolean`
-  - Caller: `TBMFotaService.getUserOnOffStateInTbmFotaService(...)`, `TBMFotaService.onTbmUpdateStatusChanged()`, `TBMFotaService.onTbmUpdateStatusStart()`, `TBMFotaService.statusSilentReceivedInTimedState()`
-
-- `public void setTbmFotaDisplayStatus(ETbmFotaPopupStatus mETbmFotaPopupStatus)`
-  - Returns: `void`
-  - Caller: `TBMFotaService.setBackLight(...)`, `TBMFotaService.onEsystemStateChanged(...)` indirectly
-  - Calls: `mInfotainmentStateManagerService.tbmFotaPopupDisplayStatusChanged(...)`
-
-- `public void startSubscribingToIsmSystemState()`
-  - Returns: `void`
-  - Caller: `TBMFotaService.onAppStart()`, `onAppRestart()`, `onAppResume()`, `IsmManager` retry logic
-  - Calls: subscription retry thread to register `ISystemStateListener`
-
-- `public void startThirtyMinuteTimer()`
-  - Returns: `void`
-  - Caller: `TBMFotaService.onEsystemStateChanged(...)`
-  - Calls: handler postDelayed for `TimedStateTimeOutThread`
-
-- `public void cancelTimeoutThread()`
-  - Returns: `void`
-  - Caller: `TBMFotaService.onEsystemStateChanged(...)`
-
-- `public void onIsmOneMinuteExpired(ETbmFotaUpdateStatus eTbmFotaUpdateStatus)`
-  - Returns: `void`
-  - Caller: `TBMFotaService.onIsmOneMinuteExpiredInTbmUpdate(...)`
-  - Calls: `mInfotainmentStateManagerService.tbmFotaUpdateStatusChanged(...)`
-
-##### Internal callback behavior
-- `mISystemStateListener.onSystemStateChange(ESystemState)`
-  - Caller: ISM framework
-  - Calls: `mIIsmServiceListener.onEsystemStateChanged(...)` and possibly `onIsmSystemStateTimed(...)` or initial CPU request
-
-- `mITbmFotaUpdateStatusListener.onTbmFotaUpdateStatusChanged(...)`
-  - Caller: ISM framework
-  - Updates internal state only
-
-- `mISystemStateTransitionTbmFotaUpdateListener.notifyPowerButtonPressedTbmFotaUpdate(...)`
-  - Caller: ISM framework
-  - Calls: `mIIsmServiceListener.onPowerButtonPressed()`
-
-- `mIAvailabilityChangeListener.onAvailabilityChange(...)`
-  - Caller: ISM framework
-  - Calls: `mIIsmServiceListener.onUserOnOffStatusChanged(...)` and possibly `onIsmDismissPopup()`
-
----
-
-### File: `app/src/main/java/com/mitsubishielectric/ahu/appservice/tbmfotaservice/data/config/VehicleCfgManager.java`
-
-#### Class: `VehicleCfgManager`
-Implements: `IVehicleCfgManager`
-
-##### Methods
-- `public static VehicleCfgManager getInstance()`
-  - Returns: `VehicleCfgManager`
-  - Caller: `TBMFotaService.onCreate()`, `TBMFotaService.getECallButtonValue()`, `TBMFotaService.checkVehicleLineConfigIsApplicableForTbm()`
-
-- `public void setVehicleConfigReaderBinder(IBinder readerBinder)`
-  - Returns: `void`
-  - Caller: `TBMFotaService.initiateVehicleConfigReaderService(...)`
-  - Calls: `VehicleConfigManager.setReaderBinder(readerBinder)`
-
-- `public void setVehicleConfigWriterBinder(IBinder writerBinder)`
-  - Returns: `void`
-  - Not directly called in current TBMFotaService code
-  - Calls: `VehicleConfigManager.setWriterBinder(writerBinder)`
-
-- `public int getByte(String key, VCByte value)`
-  - Returns: `int`
-  - Caller: `TBMFotaService.getECallButtonValue()`, `TBMFotaService.checkVehicleLineConfigIsApplicableForTbm()`
-  - Calls: `VehicleConfigManager.getInstance().getByte(key, value)`
-
-- `public int getString(String key, VCString value)`
-  - Returns: `int`
-  - Caller: `TBMFotaService.checkVehicleLineConfigIsApplicableForTbm()`
-  - Calls: `VehicleConfigManager.getInstance().getString(key, value)`
-
----
-
-### File: `app/src/main/java/com/mitsubishielectric/ahu/appservice/tbmfotaservice/VehiclePowerManager.java`
-
-#### Class: `VehiclePowerManager`
-
-##### Methods
-- `public VehiclePowerManager()`
-  - Returns: constructor
-  - Caller: `TBMFotaService.init()`
-
-- `public void init()`
-  - Returns: `void`
-  - Caller: `TBMFotaService.subscribeToVps()`
-  - Calls: `ExtSrvManager.getInstance()`, `VehiclePowerServiceManager.setBinder(...)`
-
-- `public void subscribe(IVehiclePowerServiceListener vehiclePowerServiceListener)`
-  - Returns: `void`
-  - Caller: `TBMFotaService.subscribeToVps()`
-  - Calls: `VehiclePowerServiceManager.getInstance().subscribeApp(...)`
-
-- `public void stopProcessingComplete()`
-  - Returns: `void`
-  - Caller: `TBMFotaService.mVehiclePowerServiceListener.onAppStop()`
-  - Calls: `VehiclePowerServiceManager.getInstance().stopCompleteApp(...)`
-
-- `public void notifyStartComplete()`
-  - Returns: `void`
-  - Caller: `TBMFotaService.mVehiclePowerServiceListener.onAppStart()`
-  - Calls: `VehiclePowerServiceManager.getInstance().startComplete(...)`
-
-- `public void notifyResumeComplete()`
-  - Returns: `void`
-  - Caller: `TBMFotaService.mVehiclePowerServiceListener.onAppResume()`
-  - Calls: `VehiclePowerServiceManager.getInstance().resumeCompleteApp(...)`
-
-- `public void notifyRestartComplete()`
-  - Returns: `void`
-  - Caller: `TBMFotaService.mVehiclePowerServiceListener.onAppRestart()`
-  - Calls: `VehiclePowerServiceManager.getInstance().restartCompleteApp(...)`
-
----
-
-### Command classes and interfaces
-
-#### `app/src/main/java/com/mitsubishielectric/ahu/appservice/tbmfotaservice/command/TbmUpdateStatusRequest.java`
-- `public TbmUpdateStatusRequest()`
-- Caller: `TbmFotaCpuComManager.initialRequest()`
-
-#### `app/src/main/java/com/mitsubishielectric/ahu/appservice/tbmfotaservice/command/TbmUpdateStatusNotification.java`
-- `public TbmUpdateStatusNotification()`
-- Caller: `TbmFotaCpuComManager.setCpuComBinder(...)`
-
-#### `app/src/main/java/com/mitsubishielectric/ahu/appservice/tbmfotaservice/command/TbmActionUpdateNotification.java`
-- `public TbmActionUpdateNotification(int updateAction)`
-- Caller: `TbmFotaUpdateActionReceiver.onReceive(...)`
-
-#### Interface: `ITbmFotaCpuComManager`
-- `void sendCommand(CpuCommand cmd)`
-- `void setCpuComBinder(IBinder service)`
-
-#### Interface: `ITbmFotaCpuComServiceListener`
-- `void notifyTbmData(int updateStatusOfTbm)`
-
-#### Interface: `IIsmServiceListener`
-- `void onIsmSystemStateTimed(int tbmUpdateStatus)`
-- `void onIsmServiceConnected()`
-- `void onIsmDismissPopup()`
-- `void onTimeOutTimerExpired()`
-- `void onEsystemStateChanged(ESystemState eSystemState)`
-- `void onPowerButtonPressed()`
-- `void onUserOnOffStatusChanged(boolean isUserOnOff)`
-
-#### Interface: `ITbmUpdateStatusChangeListener`
-- `void onTbmUpdateStatusChanged()`
-- `void onTbmUpdateStatusStart()`
-- `void onIsmOneMinuteExpiredInTbmUpdate(ETbmFotaUpdateStatus mETbmFotaUpdateStatus)`
-
-#### Interface: `IVehicleCfgManager`
-- `void setVehicleConfigReaderBinder(IBinder readerBinder)`
-- `void setVehicleConfigWriterBinder(IBinder writerBinder)`
-- `int getByte(String key, VCByte value)`
-- `int getString(String key, VCString value)`
-
----
-
-## Interface Module Detailed Analysis
-
-### File: `tbmfotaserviceinterface/src/main/java/com/mitsubishielectric/ahu/lib/tbmfotaserviceinterface/TbmFotaActualUpdateSts.java`
-
-#### Class: `TbmFotaActualUpdateSts`
-
-##### Methods
-- `public TbmFotaActualUpdateSts(boolean available)`
-  - Returns: constructor
-  - Caller: `TBMFotaService.notifyTbmUpdateStsToAppDrawer(...)`
-
-- `public boolean isAvailable()`
-  - Returns: `boolean`
-  - Caller: `ITbmFotaActualUpdateStsCallback.onTbmFotaActualUpdateStsChange(...)` consumers
-
-- `public int describeContents()`
-  - Returns: `int`
-  - Caller: Parcelable framework
-
-- `public void writeToParcel(Parcel parcel, int i)`
-  - Returns: `void`
-  - Caller: Parcelable framework
-
-- `private TbmFotaActualUpdateSts(Parcel in)`
-  - Returns: constructor
-  - Caller: `Creator.createFromParcel(...)`
-
-- `public static final Creator<TbmFotaActualUpdateSts> CREATOR`
-  - Methods:
-    - `createFromParcel(Parcel in)`
-    - `newArray(int size)`
-
-### File: `tbmfotaserviceinterface/src/main/aidl/com/mitsubishielectric/ahu/lib/tbmfotaserviceinterface/ITbmFotaActualUpdateStsManager.aidl`
-
-#### Interface: `ITbmFotaActualUpdateStsManager`
-- `void registerAsyncConnection(ITbmFotaActualUpdateStsCallback tbmFotaCallback)`
-  - Caller: external client binding to `TBMFotaService`
-  - Callee: `TBMFotaService.mTbmFotaServiceBinder.registerAsyncConnection(...)`
-
-- `void unRegisterAsyncConnection(ITbmFotaActualUpdateStsCallback tbmFotaCallback)`
-  - Caller: external client
-  - Callee: `TBMFotaService.mTbmFotaServiceBinder.unRegisterAsyncConnection(...)`
-
-### File: `tbmfotaserviceinterface/src/main/aidl/com/mitsubishielectric/ahu/lib/tbmfotaserviceinterface/ITbmFotaActualUpdateStsCallback.aidl`
-
-#### Interface: `ITbmFotaActualUpdateStsCallback`
-- `void onTbmFotaActualUpdateStsChange(in TbmFotaActualUpdateSts state)`
-  - Caller: `TBMFotaService.notifyTbmUpdateStsToAppDrawer(...)`
-  - Callee: external client registered to the binder
+# TBMFotaService Module Analysis
+
+## Overview
+The `TBMFotaService` module is split into two Gradle subprojects:
+- `app`: Android library/service implementation for TBM firmware update orchestration.
+- `tbmfotaserviceinterface`: A lightweight IPC interface module exposing update status callbacks.
+
+The service coordinates the following responsibilities:
+- Bind to extended framework services (ESM)
+- Communicate with the CPU command service to query/update TBM update state
+- Bind to Infotainment State Manager (ISM) and subscribe to system state and update events
+- Coordinate OTA update approval with an arbiter service
+- Send TBM update notifications and actions to the TBM HMI
+- Notify app drawer/UI of ongoing update status via IPC callback
+
+## Module Structure
+
+### `settings.gradle`
+- Includes `:app` and `:tbmfotaserviceinterface`.
+
+### `tbmfotaserviceinterface`
+- `src/main/java/com/mitsubishielectric/ahu/lib/tbmfotaserviceinterface/TbmFotaActualUpdateSts.java`
+- `src/main/aidl/com/mitsubishielectric/ahu/lib/tbmfotaserviceinterface/ITbmFotaActualUpdateStsManager.aidl`
+- `src/main/aidl/com/mitsubishielectric/ahu/lib/tbmfotaserviceinterface/ITbmFotaActualUpdateStsCallback.aidl`
+
+### `app`
+- Main service class: `TBMFotaService.java`
+- Broadcast receiver: `TbmFotaUpdateActionReceiver.java`
+- Supporting managers:
+  - `TbmFotaCpuComManager.java`
+  - `VehiclePowerManager.java`
+  - `TbmFotaArbiterManager.java`
+  - `IsmManager.java`
+  - `VehicleCfgManager.java`
+- Command wrappers: `TbmUpdateStatusRequest.java`, `TbmUpdateStatusNotification.java`, `TbmActionUpdateNotification.java`
+- CPU command constants: `TbmFotaCpuCommands.java`
+- Service constants: `TbmFotaServiceConstants.java`
+- Callback interfaces: `ITbmFotaCpuComManager`, `ITbmFotaCpuComServiceListener`, `IIsmServiceListener`, `ITbmUpdateStatusChangeListener`
+
+## `tbmfotaserviceinterface` Behavior
+
+### `TbmFotaActualUpdateSts`
+- Parcelable object containing a single boolean `available`.
+- Used to propagate whether TBM update is currently active or not.
+
+### AIDL Interfaces
+- `ITbmFotaActualUpdateStsManager`
+  - `registerAsyncConnection(ITbmFotaActualUpdateStsCallback tbmFotaCallback)`
+  - `unRegisterAsyncConnection(ITbmFotaActualUpdateStsCallback tbmFotaCallback)`
+- `ITbmFotaActualUpdateStsCallback`
+  - `onTbmFotaActualUpdateStsChange(TbmFotaActualUpdateSts state)`
+
+This interface module defines the IPC contract through which external clients can receive TBM update status changes.
+
+## `app` Module Behavior
+
+### `TBMFotaService`
+This is the core Android `Service` for TBM OTA update support.
+
+#### Lifecycle and initialization
+- `onCreate()` initializes `VehicleCfgManager`.
+- `onBind()` and `onStartCommand()` call `bindExtendedService(intent)` if not already bound.
+- `bindExtendedService()` obtains the ESM binder from the start intent or binds to the ESM service directly.
+- `registerToExtendedServiceManager(IBinder esmBinder)`:
+  - Sets the ESM binder via `ExtSrvManager.setBinder(...)`
+  - Retrieves vehicle config reader binder and initializes vehicle config access
+  - Checks if the vehicle line config is applicable for TBM updates
+  - If applicable, calls `init()`, `bindToIsm()`, `subscribeToVps()`
+
+#### `init()`
+Creates instances of:
+- `VehiclePowerManager`
+- `TbmFotaCpuComManager`
+- `TbmFotaArbiterManager`
+- `IsmManager`
+
+Also binds to TBM HMI service and registers broadcast receivers:
+- ESM reboot receiver
+- FW service reboot receiver
+- TBM update action receiver from HMI
+
+### Broadcast and Messenger communication
+- `sendBroadcastToTbmFotaHmi(int tbmUpdateStausCode)` builds and sends an intent to the HMI app:
+  - Category: `CATEGORY_TBM_UPDATE_NOTIFICATION`
+  - Action: `ACTION_TBM_UPDATE_NOTIFICATION`
+  - Extras: `TBM_UPDATE_STATUS_CODE`, `TBM_ECALL_BUTTON_VALUE`, `TBM_UPDATE_USER_ON_OFF_STATE`
+- When bound to TBM HMI, it also sends Messenger messages for system state, power button, and user on/off state.
+- `TbmFotaUpdateActionReceiver` listens for HMI actions and forwards them to the CPU communication manager.
+
+### Update status flow
+- `notifyTbmData(int tbmUpdateStausCode)` is called when a TBM update status is received from the CPU command service.
+- It performs three actions:
+  1. `mIsmManager.setTbmStatusCode(...)`
+  2. `checkTbmStatusForChangingAppDrawerIcons(...)`
+  3. `sendUpdateStatusToArbiter(...)`
+
+### App drawer / UI callback
+- `checkTbmStatusForChangingAppDrawerIcons(int tbmUpdateStausCode)` maps status codes:
+  - `TBM_UPDATE_START` → send `true` to callback
+  - `TBM_UPDATE_END`, `TBM_UPDATE_FAIL`, `TBM_UPDATE_NOT_AVAIL` → send `false`
+- `notifyTbmUpdateStsToAppDrawer(boolean sts)` invokes `mTbmFotaActualUpdateStsCallback.onTbmFotaActualUpdateStsChange(...)`
+- This is the only place where the interface module callback is used to provide ongoing status to clients.
+
+### Vehicle configuration checks
+- `checkVehicleLineConfigIsApplicableForTbm()` reads vehicle configuration values via `VehicleCfgManager`:
+  - `PROXI_VEHICLE_LINE_CONFIGURATION`
+  - `VEHICLE_MODEL`
+  - `PROXY_MODEL_YEAR`
+- It compares these against external `VsmServiceInterfaceConstants` values to decide if TBM updates should run on this vehicle.
+- If not applicable, the service unbinds from ESM and stops initialization.
+
+### Power management integration
+- `VehiclePowerManager` binds to the vehicle power service and subscribes an `IVehiclePowerServiceListener`.
+- The listener responds to lifecycle events:
+  - `onAppStart()` → initial CPU request, notify start complete, start ISM subscriptions
+  - `onAppRestart()` → same as start
+  - `onAppResume()` → same as start, with resume complete
+  - `onAppStop()` → stop processing complete
+
+### Infotainment state management via `IsmManager`
+`IsmManager` binds to the infotainment state manager and subscribes to:
+- availability changes (`IAvailabilityChangeListener`)
+- system state transitions for TBM FOTA update (`ISystemStateTransitionTbmFotaUpdateListener`)
+- TBM update status updates (`ITbmFotaUpdateStatusListener`)
+- system state changes (`ISystemStateListener`, retried until known)
+
+Important behavior in `IsmManager`:
+- On `ESystemState.FULL`, it triggers a CPU update request: `mTbmFotaCpuComManager.initialRequest()`
+- On `ESystemState.TIMED`, it calls back into `TBMFotaService.onIsmSystemStateTimed(...)`
+- Handles user on/off availability changes to show/hide popup or notify status changes
+- Starts a 30-minute timer for TIMED states and invokes `onTimeOutTimerExpired()` if it expires
+- For one-minute user interaction expiry, it tells ISM service the status changed via `tbmFotaUpdateStatusChanged(...)`
+
+### Arbiter coordination via `TbmFotaArbiterManager`
+This manager binds to `ArbiterServiceManager` and requests update approval.
+
+Key methods:
+- `requestInstallation()` calls `installationRequest(UPDATE_TYPE.OTA_TBM, listener)`
+- `requestInstallationFinished()` calls `installationFinished(UPDATE_TYPE.OTA_TBM)`
+- Tracks approval state via `onRequestGranted()` / `onRequestDenied()` callbacks
+
+`TBMFotaService` uses the arbiter for these cases:
+- If TBM update status is `TBM_UPDATE_AVAIL` or `TBM_UPDATE_FORCED`, request installation approval
+- If TBM update status is `TBM_UPDATE_SILENT`, call `requestInstallationFinished()`
+- On timeout or HMI user action, call `requestInstallationFinished()`
+
+### CPU communication via `TbmFotaCpuComManager`
+This manager wraps `CpuComManager` and handles command subscription and sending.
+
+Important behavior:
+- `setCpuComBinder(IBinder service)` binds the CPU service and subscribes to commands and errors
+- `initialRequest()` sends a `TbmUpdateStatusRequest` command to query TBM update status
+- `sendCommand(CpuCommand cmd)` forwards arbitrary commands through `CpuComManager`
+- `onReceiveCmd(CpuCommand cpuCommand)` listens for CPU commands:
+  - Only handles `CMD_TBM_UPDATE_STATUS_REQUEST` / `SUBCMD_TBM_FOTA_UPDATE_STATUS_REQUEST_RESULT`
+  - Extracts the first byte from `data` and calls `mTbmFotaCpuComServiceListener.notifyTbmData(...)`
+
+Command classes:
+- `TbmUpdateStatusRequest` → command `0x40`, subcommand `0x07`
+- `TbmUpdateStatusNotification` → command `0x40`, subcommand `0x87`
+- `TbmActionUpdateNotification` → command `0x40`, subcommand `0x08`, with a one-byte payload for the user action
+
+### HMI action handling
+`TbmFotaUpdateActionReceiver` listens for HMI broadcast actions from the FOTA UI and does one of the following:
+- `ACTION_TBM_UPDATE` → send `TbmActionUpdateNotification` to VCPU and call `onTbmUpdateStatusChanged()` on the service
+- `ACTION_TBM_UPDATE_NOT_AVAILABLE` → call `onTbmUpdateStatusChanged()`
+- `ACTION_TBM_UPDATE_ONGOING` → call `onTbmUpdateStatusStart()`
+- `ACTION_TBM_UPDATE_TIMEOUT` → call `onIsmOneMinuteExpiredInTbmUpdate(AVAILABLE_USER_OFF)`
+
+### External services and APIs used
+The module does not perform local file I/O. It interacts with platform services and external frameworks:
+- `com.mitsubishielectric.ahu.efw.lib.extendedservicemanager.ExtSrvManager`
+- `com.mitsubishielectric.ahu.efw.lib.cpucomservice.CpuComManager`
+- `com.mitsubishielectric.ahu.efw.lib.vehiclepwrmgr.VehiclePowerServiceManager`
+- `com.mitsubishielectric.ahu.efw.lib.vehicleconfigservice.VehicleConfigManager`
+- `com.mitsubishielectric.ahu.appservice.infotainmentstatemanager.IInfotainmentStateManagerService`
+- `com.mitsubishielectric.ahu.appservice.ota.arbiter.ArbiterServiceManager`
+- TBM HMI service: `com.mitsubishielectric.ahu.app.tbmfotahmi.TbmFotaHmiUpdateService`
+
+## Summary of responsibilities
+
+### What the module does
+- Orchestrates TBM firmware update state and UI notifications
+- Observes system state and vehicle power state
+- Requests installation approval through an arbiter
+- Sends commands to VCPU and consumes responses
+- Broadcasts status updates to the TBM HMI
+- Provides a callback interface for app UI components to show update state
+
+### What the module does not do
+- It does not read or write ordinary app files from disk.
+- It does not implement the actual update delivery mechanism itself.
+- It does not directly manage firmware payloads; it only monitors and notifies state.
+
+## Key call graph
+
+1. `onStartCommand` / `onBind` → `bindExtendedService`
+2. `bindExtendedService` → `bindEsmService` or `initiateExtSrv`
+3. `registerToExtendedServiceManager` → `init()` + `bindToIsm()` + `subscribeToVps()`
+4. `TbmFotaCpuComManager.setCpuComBinder` → subscribe to CPU commands
+5. `TbmFotaCpuComManager.initialRequest` → send `TbmUpdateStatusRequest`
+6. `onReceiveCmd` from CPU socket → `notifyTbmData(int)`
+7. `notifyTbmData` → update ISM manager, update app drawer callback, arbiter/HMI flow
+8. `TbmFotaUpdateActionReceiver.onReceive` → `sendCommand(new TbmActionUpdateNotification(...))`
+9. `IsmManager` callbacks → `TBMFotaService.onIsm*...` methods
